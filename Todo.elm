@@ -21,9 +21,10 @@ import Html.Attributes exposing (..)
 import Html.Events exposing (..)
 import Html.Lazy exposing (lazy, lazy2, lazy3)
 import Json.Decode as Json
-import Signal exposing (Signal, Address)
+import Signal exposing (Signal, Address, sampleOn, merge)
 import String
 import Window
+import Time exposing (fps)
 
 
 ---- MODEL ----
@@ -34,6 +35,7 @@ type alias Model =
     , field : String
     , uid : Int
     , visibility : String
+    , time : Float
     }
 
 
@@ -42,6 +44,7 @@ type alias Task =
     , completed : Bool
     , editing : Bool
     , id : Int
+    , time : Float
     }
 
 
@@ -51,6 +54,7 @@ newTask desc id =
     , completed = False
     , editing = False
     , id = id
+    , time = 0
     }
 
 
@@ -60,6 +64,7 @@ emptyModel =
     , visibility = "All"
     , field = ""
     , uid = 0
+    , time = 0
     }
 
 
@@ -79,6 +84,8 @@ type Action
     | Check Int Bool
     | CheckAll Bool
     | ChangeVisibility String
+    | Tick Float
+    | TickTasks Float
 
 
 -- How we update our Model on a given Action?
@@ -129,6 +136,14 @@ update action model =
       ChangeVisibility visibility ->
           { model | visibility = visibility }
 
+      Tick dt ->
+          { model | time = model.time + dt }
+
+      TickTasks dt ->
+          let updateTask t = { t | time = t.time + dt}
+          in
+              { model | tasks = List.map updateTask model.tasks }
+
 
 ---- VIEW ----
 
@@ -144,7 +159,7 @@ view address model =
           , lazy3 taskList address model.visibility model.tasks
           , lazy3 controls address model.visibility model.tasks
           ]
-      , infoFooter
+      , infoFooter model.time
       ]
 
 
@@ -226,7 +241,7 @@ todoItem address todo =
               []
           , label
               [ onDoubleClick address (EditingTask todo.id True) ]
-              [ text todo.description ]
+              [ text (todo.description ++ "  ------  " ++ (toString todo.time))]
           , button
               [ class "destroy"
               , onClick address (Delete todo.id)
@@ -286,10 +301,13 @@ visibilitySwap address uri visibility actualVisibility =
       [ a [ href uri, classList [("selected", visibility == actualVisibility)] ] [ text visibility ] ]
 
 
-infoFooter : Html
-infoFooter =
+infoFooter : Float -> Html 
+infoFooter time =
     footer [ id "info" ]
       [ p [] [ text "Double-click to edit a todo" ]
+      , p []
+          [ text (toString time)
+          ]
       , p []
           [ text "Written by "
           , a [ href "https://github.com/evancz" ] [ text "Evan Czaplicki" ]
@@ -299,7 +317,6 @@ infoFooter =
           , a [ href "http://todomvc.com" ] [ text "TodoMVC" ]
           ]
       ]
-
 
 ---- INPUTS ----
 
@@ -312,12 +329,23 @@ main =
 -- manage the model of our application over time
 model : Signal Model
 model =
-  Signal.foldp update initialModel actions.signal
+  --Signal.foldp update initialModel actions.signal
+  Signal.foldp update initialModel inputSignal
 
+
+
+inputSignal : Signal Action
+inputSignal =
+  let delta = Signal.map (\t -> t/20) (fps 25)
+      ticking = Signal.map Tick delta
+      tickTasking = Signal.map TickTasks delta
+  in
+      merge actions.signal tickTasking
 
 initialModel : Model
 initialModel =
-  Maybe.withDefault emptyModel getStorage
+  emptyModel
+  --Maybe.withDefault emptyModel getStorage
 
 
 -- actions from user input
@@ -344,7 +372,7 @@ port focus =
 
 
 -- interactions with localStorage to save the model
-port getStorage : Maybe Model
+--port getStorage : Maybe Model
 
 port setStorage : Signal Model
 port setStorage = model
